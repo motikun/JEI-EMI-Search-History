@@ -1,0 +1,107 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev.legacyforge'
+}
+// The upstream mojang-meta endpoint currently returns HTTP 502 for 1.20.1.
+// This metadata-only repository mirrors Mojang's manifest and bundled server libraries.
+repositories {
+    exclusiveContent {
+        forRepository {
+            maven {
+                url = rootProject.file('gradle/minecraft-metadata')
+                metadataSources { gradleMetadata() }
+            }
+        }
+        filter { includeVersion 'net.neoforged', 'minecraft-dependencies', '1.20.1' }
+    }
+}
+version = ''
+base.archivesName = "${mod_id}-${mod_version}-mc1.20.1-forge"
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+sourceSets.main {
+    java.exclude 'net/motikun/jeihistory/mixin/GuiTextFieldFilterMixin.java', 'net/motikun/jeihistory/mixin/EmiSearchWidgetMixin.java'
+    java.srcDirs = ['src/main/java', '../common/src/client/java']
+    resources.srcDir '../common/src/client/resources'
+}
+if (project.hasProperty('clientSmoke')) sourceSets.main.java.srcDir 'src/clientSmokeJei/java'
+if (project.hasProperty('emiSmoke')) sourceSets.main.java.srcDir 'src/clientSmokeEmi/java'
+legacyForge {
+    version = "1.20.1-${forge_version}"
+    runs {
+        forgeClient {
+            client()
+            if (project.hasProperty('worldSmoke')) {
+                gameDirectory = rootProject.file('run-world-forge')
+                systemProperty 'jeihistory.worldCases', project.findProperty('worldCases') ?: '24'
+                programArguments.addAll '--quickPlayMultiplayer', '127.0.0.1:25586'
+            }
+            gameDirectory = rootProject.file(project.hasProperty('worldSmoke') ? 'run-world-forge' : project.hasProperty('emiSmoke') ? 'run-forge-emi-smoke' : project.hasProperty('clientSmoke') ? 'run-forge-jei-smoke' : 'run-forge')
+            systemProperty 'jeihistory.emiSmokeRestart', project.hasProperty('emiSmokeRestart').toString()
+        }
+        forgeServer {
+            server()
+            gameDirectory = rootProject.file('run-forge-server')
+            programArgument '--nogui'
+            jvmArgument '-Xlog:class+load=info:file=server-class-loading.log'
+        }
+    }
+    mods { jeihistory { sourceSet sourceSets.main; sourceSet project(':common').sourceSets.main } }
+}
+dependencies {
+    implementation project(':common')
+    modCompileOnly 'mezz.jei:jei-1.20.1-forge:15.62.0.219'
+    modCompileOnly 'dev.emi:emi-forge:1.1.24+1.20.1'
+    if (!project.hasProperty('emiOnly')) modRuntimeOnly "mezz.jei:jei-1.20.1-forge:${forge_jei_version}"
+    if (project.hasProperty('withEmi') || project.hasProperty('emiOnly') || project.hasProperty('emiSmoke') || project.hasProperty('worldSmoke')) modRuntimeOnly 'dev.emi:emi-forge:1.1.24+1.20.1'
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+    add('forgeClientAdditionalRuntimeClasspath', 'net.neoforged:minecraft-dependencies:1.20.1') {
+        capabilities { requireCapability 'net.neoforged:minecraft-dependencies-natives' }
+    }
+}
+mixin {
+    add sourceSets.main, 'jeihistory.refmap.json'
+    config 'jeihistory.mixins.json'
+}
+def forgeMetadata = [mod_name: mod_name, mod_license: mod_license, mod_version: mod_version,
+                     mod_authors: mod_authors, mod_description: mod_description]
+tasks.named('processResources') {
+    inputs.properties forgeMetadata
+    filesMatching('META-INF/mods.toml') { expand forgeMetadata }
+}
+tasks.named('jar') {
+    from project(':common').sourceSets.main.output.classesDirs
+    exclude 'net/motikun/jeihistory/smoke/**'
+    manifest.attributes 'MixinConfigs': 'jeihistory.mixins.json'
+}
+
+if (project.hasProperty('modernUi')) {
+    dependencies {
+        modRuntimeOnly 'icyllis.modernui:ModernUI-Forge:1.20.1-3.12.0.1@jar'
+        additionalRuntimeClasspath('icyllis.modernui:ModernUI-Core:3.12.0') {
+            exclude group: 'org.slf4j'
+            exclude group: 'org.apache.logging.log4j'
+            exclude group: 'com.google.code.findbugs'
+            exclude group: 'org.jetbrains'
+            exclude group: 'com.ibm.icu'
+            exclude group: 'it.unimi.dsi'
+        }
+        additionalRuntimeClasspath('icyllis.modernui:ModernUI-Markflow:3.12.0') {
+            exclude group: 'org.slf4j'
+            exclude group: 'org.jetbrains'
+        }
+    }
+}
+
+if (project.hasProperty('worldSmoke')) sourceSets.main.java.srcDir 'src/worldSmoke/java'
+
+// Independent regression fixture; never included in a distribution or root build.
+if (project.hasProperty('productionSmoke')) {
+    sourceSets.main.java.srcDir 'src/productionSmoke/java'
+    def productionFixture = tasks.register('productionSmokeJar', Jar) {
+        archiveBaseName = 'jeihistory-validation'
+        archiveClassifier = 'test'
+        from(sourceSets.main.output.classesDirs) { include 'net/motikun/jeihistory/smoke/**' }
+        from('src/productionSmoke/resources')
+    }
+    obfuscation.reobfuscate(productionFixture, sourceSets.main)
+}

@@ -1,0 +1,31 @@
+plugins {
+    id 'base'
+    id 'net.neoforged.moddev' version '2.0.148' apply false
+    id 'net.neoforged.moddev.legacyforge' version '2.0.148' apply false
+}
+allprojects {
+    group = mod_group_id
+    tasks.withType(Jar).configureEach {
+        preserveFileTimestamps = false
+        reproducibleFileOrder = true
+        from(rootProject.file('LICENSE')) { into 'META-INF' }
+    }
+    repositories {
+        mavenCentral()
+        maven { url = 'https://maven.blamejared.com' }
+        maven { url = 'https://repo.sleeping.town' }
+        maven { url = 'https://maven.izzel.io/releases/' }
+    }
+}
+tasks.register('test') { dependsOn ':common:test', ':forge:test', ':neoforge:test' }
+tasks.register('distributions', Copy) {
+    dependsOn ':forge:build', ':neoforge:build'
+    from project(':forge').layout.buildDirectory.dir('libs')
+    from project(':neoforge').layout.buildDirectory.dir('libs')
+    include "${mod_id}-${mod_version}-mc1.20.1-forge.jar", "${mod_id}-${mod_version}-mc1.21.1-neoforge.jar"
+    into layout.buildDirectory.dir('libs')
+}
+tasks.named('build') { dependsOn 'test', 'distributions' }
+['runClient', 'runServer', 'runGameTestServer', 'runData'].each { name ->
+    tasks.register(name) { dependsOn ":neoforge:${name}" }
+}
